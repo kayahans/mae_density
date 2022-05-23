@@ -2,8 +2,8 @@
 
 Calculates magnetic anisotropy density of collinear systems
 
-If you use this code, please cite: https://arxiv.org/abs/2205.00300
-In the work above, several examples are given for FeCl2, VSe2 and CrI3. 
+If you use this code, please cite: https://arxiv.org/abs/2205.00300.
+In that work, several examples are given for FeCl2, VSe2 and CrI3. 
 
 The code here post-processes Quantum Espresso (QE) output and works with versions > 7.0.0.
 Required QE output are data-file-schema.xml and atomic-proj.xml files that are 
