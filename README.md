@@ -29,6 +29,9 @@ mae.plot_dos_2D(res['Cr1_d'])
 This block of code above will create two plots for the MAE density
 around the d-orbitals of first Cr atom in CrI3. 
 
+wfc_dict is the dictionary of atomic wavefunctions (in the same order)
+for each pseudopotential used in the calculation.
+
 1D plot is the marginal MAE densities on the valence and conduction bands.
 2D plot is pair MAE density.
 
