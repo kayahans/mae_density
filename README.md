@@ -17,7 +17,7 @@ Here is a typical example of how the code can be used:
 import sys
 mae_path = '<MAE.py directory>'
 sys.path.insert(0, mae_path)
-from mae2 import MAE
+from mae import MAE
 mae = MAE(filename_data = './data-file-schema.xml',
           filename_proj = './atomic_proj.xml',
           wfc_dict = {'Cr':['s','s','p','d'], 
