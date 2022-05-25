@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from importlib import import_module
 from importlib.metadata import version
+import time
 import typing
 import warnings
 import sys, os
@@ -69,16 +70,18 @@ for name in used_dependencies:
 constants = {
              'kb' :  8.617 * 1e-2, # meV/K
              'Ry' : 27.211/2.0, # Rydberg to EVeV
-             'Ha' : 27.211 # Hartree to EVeV
+             'Ha' : 27.211, # Hartree to eV
+             'ksi': 1.239 * 1e-4, # cm^-1 to eV, used for spin orbit coupling constant
             }
 
 def normal(x, mu, sig=0.05):
     # Gaussian-1D
-    return np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
+    return np.exp(-(x - mu)**2 / (2 * sig**2))
 
 def normal2d(x, y, mux, muy, sig=0.1):
     # Gaussian-2D
-    return np.exp(-(np.power(x - mux, 2.) + np.power(y - muy, 2.)) / (2 * np.power(sig, 2.)))
+    return np.exp(-((x - mux)**2 + (y - muy)**2) / (2 * sig**2))
+
 
 class AngularMoment:
     def __init__(self) -> None:
@@ -88,7 +91,7 @@ class AngularMoment:
         Then, a unitary transformation is applied to convert into real SH
         """
         # p-orbitals <mi|Lx|mj> (lx_ij)
-        self.lxp_ij = np.zeros((3,3))
+        self.lxp_ij = np.zeros((3,3), dtype=complex)
         ii = 0
         l = 1
         for mi in range(-1, 2, 1):
@@ -104,7 +107,7 @@ class AngularMoment:
             ii += 1
 
         # d-orbitals <mi|Lx|mj> (lx_ij)
-        self.lx_ij = np.zeros((5,5))
+        self.lx_ij = np.zeros((5,5), dtype=complex)
         ii = 0
         l = 2
         for mi in range(-2, 3, 1):
@@ -120,7 +123,7 @@ class AngularMoment:
             ii += 1
 
         # p-orbital <mi|Lz|mj> (lz_ij)
-        self.lzp_ij = np.zeros((3,3))
+        self.lzp_ij = np.zeros((3,3), dtype=complex)
         l = 1
         ii = 0
         for mi in range(-1, 2, 1):
@@ -132,7 +135,7 @@ class AngularMoment:
             ii += 1
 
         # d-orbital <mi|Lz|mj> (lz_ij)
-        self.lz_ij = np.zeros((5,5))
+        self.lz_ij = np.zeros((5,5), dtype=complex)
         l = 2
         ii = 0
         for mi in range(-2, 3, 1):
@@ -189,12 +192,12 @@ class QE_XML(object):
         Args:
             filename (str): Name of the XML file
             atmwfc (typing.Dict): atomic wavefunctions to be read. 
-            atmwfc has to include all the states printed out in the projwfc.x file
-            Example:
-            FeCl2 has three atoms in the simulation cell
-            Fe has s,s,p,d states, Cl has s and p states. Therefore:
-            atmwfc = {'Fe':['s', 's', 'p', 'd'],'Cl1':['s', 'p'], 'Cl2':['s', 'p']}
-            data_only(bool): If True, reads only datafile
+                atmwfc has to include all the states printed out in the projwfc.x file
+                Example:
+                FeCl2 has three atoms in the simulation cell
+                Fe has s,s,p,d states, Cl has s and p states. Therefore:
+                atmwfc = {'Fe':['s', 's', 'p', 'd'],'Cl1':['s', 'p'], 'Cl2':['s', 'p']}
+            data_only(bool): If True, reads only datafile, not atomic-proj.xml file.
         """
         self._read_datafile(filename_data, wfc_dict)
         if not data_only:
@@ -207,8 +210,8 @@ class QE_XML(object):
         try:
             tree = ET.parse(filename)
         except:
-            print('Provide filename/correct xml filename')
-            exit()
+            print('Error: Provide filename/correct xml filename')
+            sys.exit(1)
             
         root = tree.getroot()
         output = root.find('output')
@@ -240,15 +243,15 @@ class QE_XML(object):
         try:
             assert(len(self.atomwfcs) == self.num_wfc)
         except:
-            print("Atomic wavefunction dictionary is incorrect!")
+            print("Error: Atomic wavefunction dictionary is incorrect!")
             print("Input read here (compare to projwfc.x output):")
             for i, item in enumerate(self.atomwfcs):
                 print("State # ", i, " wfc ", item)
-            exit(1)
+            sys.exit(1)
         
-        self.kw        = np.zeros(self.num_kpts)
-        self.eig       = np.zeros((self.num_kpts, 2, self.nbnd_up))
-        self.occ       = np.zeros((self.num_kpts, 2, self.nbnd_up))
+        self.kw        = np.zeros(self.num_kpts, dtype=float)
+        self.eig       = np.zeros((self.num_kpts, 2, self.nbnd_up), dtype=float)
+        self.occ       = np.zeros((self.num_kpts, 2, self.nbnd_up), dtype=float)
         
         ik = 0
         for bs_el in bs:
@@ -285,12 +288,16 @@ class QE_XML(object):
         This leaves out most of the basic information in the atomic-proj.xml file
         as these are initially read from the data-file-schema.xml file. 
         Below, there are some assertions that check if both files have matching information.
+
+        Args:
+            filename (str): atomic-proj.xml filename
+            orbital (str, optional): If not None, then only these orbitals are read from the xml file.
         """
         try:
             tree = ET.parse(filename)
         except:
-            print('Provide filename/correct xml filename')
-            exit()
+            print('Error: Provide filename/correct xml filename')
+            sys.exit(1)
 
         root = tree.getroot()
         header = root.find('HEADER')
@@ -310,7 +317,7 @@ class QE_XML(object):
         ik = -1
         if orbital == None:
             # Read all the orbitals
-            proj = np.zeros((nkpts, nspin, natomwfc, nbands)) + 0j
+            proj = np.zeros((nkpts, nspin, natomwfc, nbands), dtype=complex)
             min_index = 0
         else:
             orb_id = orbital.split('_')[0]
@@ -323,7 +330,7 @@ class QE_XML(object):
                 natomwfc = 3
             elif orb_kind == 'd':
                 natomwfc = 5
-            proj = np.zeros((nkpts, nspin, natomwfc, nbands)) + 0j
+            proj = np.zeros((nkpts, nspin, natomwfc, nbands), dtype=complex)
             atomic_wfc_indices = []
             for idx, i in enumerate(self.atomwfcs):
                 if i.startswith(orbital):
@@ -351,7 +358,7 @@ class QE_XML(object):
                         proj[ik, ispin, index-min_index] = np.array([ (lambda x,y: complex(float(x),float(y)))(*c.split()) for c in wfc.text.strip().splitlines()])
                 
         self.proj = proj
-        self.atomproj = np.zeros((nkpts, nspin, nbands, natomwfc)) + 0j
+        self.atomproj = np.zeros((nkpts, nspin, nbands, natomwfc), dtype=complex)
         for ik in range(nkpts):
             for ispin in range(nspin):
                 for ib in range(nbands):
@@ -389,6 +396,8 @@ class QE_XML(object):
         return proj
 
     def print_atomwfc(self):
+        """Prints the list of  atomic wavefunctions. Should match the stdout from projwfc.x.
+        """
         for i, item in enumerate(self.atomwfcs):
             print("State # ", i, " wfc ", item)
 
@@ -397,7 +406,7 @@ class MAE(AngularMoment):
                  filename_data : str = './data-file-schema.xml', 
                  filename_proj : str = './atomic-proj.xml', 
                  orbital : str = None) -> None:
-        """MAE (Magnetic Anisotropy Energy) class
+        """MAE (Magnetic Anisotropy Energy) 
         The code here uses second order perturbation theory formalism 
         to calculate the magnetic anisotropy energy from collinear 
         DFT calculations. This code has been heavily utilized in 
@@ -411,17 +420,17 @@ class MAE(AngularMoment):
         atomic wavefunctions, only the indices of each atomic wavefunction 
         are given.  This information is found in projwfc.x output. However, 
         for each pseudopotential, there is a certain set of atomic wavefunctions.
-        Therefore, this list can be provided in "wfc_dict" without any loss of 
-        generality.
+        Therefore, these lists of atomic wavefunctions can be provided in 
+        "wfc_dict" without any loss of generality.
 
         Args:
             wfc_dict (typing.Dict): Atomic wavefunction dictionary.
-            Example: 
-            wfc_dict = {'Fe':['s','s','p','d'], 'Si':['s','p'], 'O':['s','p']}
-            The ordering in the pseudopotential must be preserved in the lists. 
-            
+                Example: 
+                wfc_dict = {'Fe':['s','s','p','d'], 'Si':['s','p'], 'O':['s','p']}
+                The ordering in the pseudopotential must be preserved in the lists. 
             filename_data (str, optional): Name/location of data-file-schema.xml. Defaults to './data-file-schema.xml'.
             filename_proj (str, optional): Name/location of atomic-proj.xml. Defaults to './atomic-proj.xml'.
+            orbital (str, optional): If not None, then only this orbital is read from the proj.xml file. 
         """
         super().__init__()
         self.axml = QE_XML(filename_data, filename_proj, wfc_dict, orbital=orbital)
@@ -434,14 +443,16 @@ class MAE(AngularMoment):
     def get_proj(self, orbitals : typing.List = None) -> typing.Dict:
         """Get only a subset of band projections onto atomic wavefunctions
         This is useful if you need to run MAE analysis on a subset of atoms or orbitals
-        Examples:
-        mae = MAE()
-        proj = mae.read_proj(['Fe1_d'])
-        proj = mae.read_proj(['Fe3_d', 'O5_p', 'Si8_p'])
+            Examples:
+            mae = MAE()
+            proj = mae.read_proj(['Fe1_d'])
+            proj = mae.read_proj(['Fe3_d', 'O5_p', 'Si8_p'])
 
         Args:
             orbitals (typing.List): List of orbitals in "AtomIndex_{s,p,d}" format
-            as given in the examples above
+                as given in the examples above
+                If None, it will return the set of orbitals that are defined 
+                when the QE_XML object is initialized.
 
         Returns:
             typing.Dict: A dictionary of {orbital:projection matrices}
@@ -460,7 +471,7 @@ class MAE(AngularMoment):
                 ksi : float = 1.0, 
                 min_band : int = 0,
                 max_band : int = -1,
-                deltaE = 10) -> typing.Dict:
+                collect : bool = True) -> typing.Dict:
         """Main routine to calculate the MAE.
         Also returns a dictionary where energy (lx_e/lz_e) and band (lx_mat/lz_mat) 
         resolved MAE are stored for Lx and Lz angular momentum components. 
@@ -471,179 +482,170 @@ class MAE(AngularMoment):
             proj_dict (typing.Dict): {"orbital": atomic_wavefunction} dict. 
             Use "get_proj" function to produce this input.
             ksi (float, optional): Spin orbit coupling constant. Defaults to 1.0. Units cm^-1. 
+            min_band (int, optional): For very large calculations, one may need the bands only 
+            closer to Fermi level. Lower index of the bands used in the MAE integration. Defaults 
+            to 0. 
+            max_band (int, optional): Similar to min_band, upper index of the bands. Defaults to -1, 
+            meaning all the bands. 
             deltaE (int, optional): A scaling factor to calculate numerically significant MAE 
             contributions. For an insulating system, this can be considered as the energy scale in 
             eV. For example, a deltaE value of 10 in an insulating system, interband couplings with 
             more than 10 eV difference between the bands are not calculated. For metallic systems, 
             would also include the multiplications of the occupancies. For larger 
-            deltaE, results are expected to converge.  Defaults to 10. 
+            deltaE, results are expected to converge.  Defaults to -1. 
 
         Returns:
             typing.Dict: a dictionary of energy and band resolved Lx and Lz data for each orbitals
         """
-        nk = self.axml.num_kpts
+        nk     = self.axml.num_kpts
         nbands = self.axml.nbnd_up
-        nspin = 2
-        ksi =  ksi * 1.239 * 1e-4
+        nspin  = 2
+        ksi    = ksi * constants['ksi']
         eig_kn = self.axml.eig # eigenvalues
+        occ_kn = self.axml.occ
         results = dict()
+            
         if max_band == -1:
             max_band = self.axml.nbnd_up
         if min_band != 0 or max_band != self.axml.nbnd_up:
             nbands = max_band - min_band
-            print("Calculating bands between {}-{}".format(min_band, max_band))
+            print(" Calculating bands between {}-{}".format(min_band, max_band))
             
         for orbital, proj in proj_dict.items():
-            lx_mat = np.zeros((nbands,nbands)) + 0j
-            lz_mat = np.zeros((nbands,nbands)) + 0j
+            lx_mat = np.zeros((nbands,nbands), dtype=complex)
+            lz_mat = np.zeros((nbands,nbands), dtype=complex)
             lx_e = []
             lz_e = []
             
             if orbital[-1] == 'p':
                 lx = self.lxp12
                 lz = self.lzp12
-                num_orb = 3
             elif orbital[-1] == 'd':
                 lx = self.lxd12
                 lz = self.lzd12
-                num_orb = 5
             else:
-                print("Orbital undefined for MAE calculation")
+                print("Error: Orbital undefined for MAE calculation")
                 print("Currently can only use complete sets of p and d orbitals!")
-                exit(1)
-            indices = np.zeros((nspin * nbands, 2), dtype=int)
-            ind = 0
-            for i in range(nspin):
-                for j in range(min_band, max_band, 1):
-                    indices[ind] = [i,j]
-                    ind += 1
-
-            # Use some threshold to save computing time
-            # if e_n - e_n' is larger than 10 eV, or occupations are too small, do not calculate Lx or Lz 
-            # results should converge at large deltaE values
-            threshold = 1./deltaE
-            occ = self.axml.occ
-            lx_e = []
-            lz_e = []
-            for ik in range(nk):
-                for sv, v in indices:
-                    for sc, c in indices:
-                        factor = (occ[ik,sv, v]) * (1-occ[ik,sc,c]) / (eig_kn[ik, sc, c] - eig_kn[ik, sv, v]+1E-8)
-                        if factor > threshold:
-                            # print(ik, sv, sc, v, c, occ[ik,sv, v], 1-occ[ik,sc,c])
-                            spin_sign = (2.0 * (sv == sc)) - 1.0
-                            factor *= self.axml.kw[ik] * spin_sign * ksi**2 * 1000  # eV to meV
-                            # <v, s|Lx|c, sc> = \sum_d1,d2 <v, sv|d1> <d1|Lx|d2> <d2|c, sc>
-                            lx_vc = np.zeros((num_orb,num_orb)) + 0j 
-                            lz_vc = np.zeros((num_orb,num_orb)) + 0j
-                            psiv_phii_conj = proj[ik, sv, :, v].conj()
-                            psic_phij = proj[ik, sc, :, c]
-                            
-                            lx_vc = psiv_phii_conj @ lx @ psic_phij # <v, sv|d1> <d1|Lx|d2> <d2|c, sc>
-                            lz_vc = psiv_phii_conj @ lz @ psic_phij
-                        
-                            slx_vc = np.sum(lx_vc)
-                            slz_vc = np.sum(lz_vc)
-                            cx = factor * slx_vc * slx_vc.conj()
-                            cz = factor * slz_vc * slz_vc.conj()
-                            lx_mat[v-min_band,c-min_band] += cx
-                            lz_mat[v-min_band,c-min_band] += cz
-                            lx_e.append([sv, sc, eig_kn[ik, sv, v], eig_kn[ik, sc, c], cx.real])
-                            lz_e.append([sv, sc, eig_kn[ik, sv, v], eig_kn[ik, sc, c], cz.real])
-                    #end for sc
-                #end for sv
-            #end for k
-            print("LZ :{0:.3f} meV".format(np.sum(lz_mat).real))
-            print("LX :{0:.3f} meV".format(np.sum(lx_mat).real))
-            print("Total (LZ - LX) : {0:.3f} meV".format((np.sum(lz_mat) - np.sum(lx_mat)).real))
-            results[orbital] = {'lx_e':np.array(lx_e, dtype=object), 'lz_e':np.array(lz_e, dtype=object), 'lx_mat':lx_mat, 'lz_mat':lz_mat}
-        return results
-    
-    # @staticmethod
-    # def plot_dos_1D(mat : typing.Dict, emin = -6, emax = 4, prefix = 'mat', line_density = 100, sigma = 0.05, show=False):
-    #     """Plots 1D MAE density
-    #     Since MAE is a pair density, to plot electronic DOS like figure,
-    #     conduction and valence band regions are calculated as "marginal" densities
-
-    #     Args:
-    #         mat (typing.Dict): mat dictionary returned from get_mat function
-    #         emin (int, optional): Minimum valence band energy. 
-    #                               Units in eV, with respect to Fermi energy. Defaults to -6.
-    #         emax (int, optional): Maximum conduction band energy. Defaults to 4.
-    #         prefix (str, optional): Saved figure prefix. Defaults to 'mat'.
-    #         line_density (int, optional): Line density per eV. Defaults to 100.
-    #         show (bool, optional): If True, plot only do not save figure. Defaults to False.
-    #     """
-    #     assert(emin < 0)
-    #     assert(emax > 0)
-        
-    #     lx_e = mat['lx_e']
-    #     lz_e = mat['lz_e']
-        
-    #     lx_v_plus   =  lx_e[lx_e[:,0] == 0] # Lx contribution from spin up valence bands 
-    #     lz_v_plus   = lz_e[lz_e[:,0] == 0] # Lz contribution from spin up conduction bands
-    #     v_lx_plus   = lx_v_plus[:,4]
-    #     v_lz_plus   = lz_v_plus[:,4]
-    #     v_mae_plus  = v_lz_plus - v_lx_plus
-    #     e_v_plus    = lx_v_plus[:,2]
-        
-    #     lx_v_minus  = lx_e[lx_e[:,0] == 1]
-    #     lz_v_minus  = lz_e[lz_e[:,0] == 1]
-    #     v_lx_minus  = lx_v_minus[:,4]
-    #     v_lz_minus  = lz_v_minus[:,4]
-    #     v_mae_minus = v_lz_minus - v_lx_minus
-    #     e_v_minus   = lx_v_minus[:,2]
-        
-    #     lx_c_plus   =  lx_e[lx_e[:,1] == 0]
-    #     lz_c_plus   = lz_e[lz_e[:,1] == 0]
-    #     c_lx_plus   = lx_c_plus[:,4]
-    #     c_lz_plus   = lz_c_plus[:,4]
-    #     c_mae_plus  = c_lz_plus - c_lx_plus
-    #     e_c_plus    = lx_c_plus[:,3]
-        
-    #     lx_c_minus  = lx_e[lx_e[:,1] == 1]
-    #     lz_c_minus  = lz_e[lz_e[:,1] == 1]
-    #     c_lx_minus  = lx_c_minus[:,4]
-    #     c_lz_minus  = lz_c_minus[:,4]
-    #     c_mae_minus = c_lz_minus - c_lx_minus
-    #     e_c_minus   = lx_c_plus[:,3]
-        
-    #     intervals = [[emin, 0], # valence
-    #                  [0, emax]] # conduction band
-    #     vals = [[e_v_plus, e_v_minus, v_mae_plus, v_mae_minus], # valence
-    #             [e_c_plus, e_c_minus, c_mae_plus, c_mae_minus]] # conduction band
-        
-    #     plt.figure()
-    #     for ind, interval in enumerate(intervals):
-    #         i_min, i_max = interval
-    #         e_plus, e_minus, mae_plus, mae_minus = vals[ind]
-    #         x = np.linspace(i_min, i_max, (i_max-i_min)*line_density+1)
+                sys.exit(1)
+            start_time = time.time()
+            proj    = np.swapaxes(proj, 2,3)[:,:,min_band:max_band,:]
+            left_lx = np.matmul(proj.conj(), lx)
+            left_lz = np.matmul(proj.conj(), lz)
             
-    #         # Initialize zero array
-    #         y = 0 * normal(0, x)
-    #         for i, ei in enumerate(e_plus):
-    #             if ei > i_min and ei < i_max:
-    #                 y += mae_plus[i] * normal(ei, x, sig=sigma)
+            # K-point resolved
+            lx_k = np.zeros(nk, dtype=complex)
+            lz_k = np.zeros(nk, dtype=complex)
+            
+            if collect: 
+                # Band resolved
+                lx_b = np.zeros((nspin, nbands, nspin, nbands), dtype=complex)
+                lz_b = np.zeros((nspin, nbands, nspin, nbands), dtype=complex)
 
-    #         for i, ei in enumerate(e_minus):
-    #             if ei > i_min and ei < i_max:
-    #                 y += mae_minus[i] * normal(ei, x, sig=sigma)
-    #         plt.plot(x, y)
-        
-    #     plt.axhline(y=0, linestyle='dashed', color='k')
-    #     plt.axvline(x=0, linestyle='dashed', color='k')
-    #     plt.xlabel('Energy (eV)')
-    #     plt.ylabel('MAE (meV)')
-    #     plt.xlim((emin, emax))
-    #     plt.grid(linestyle='-')
-    #     plt.grid(which='minor', linestyle='--', axis='x', zorder=-100)
-    #     if show:
-    #         plt.show()
-    #     else:
-    #         plt.savefig('./'+prefix+'-mae-dos-1D.png', dpi=300, pad_inches=0) 
+                # Energy resolved
+                min_e = np.min(eig_kn[:,:,min_band:max_band])
+                max_e = np.max(eig_kn[:,:,min_band:max_band])
+                line_density = 50
+                nbins = int((max_e-min_e)*line_density)
+                x = np.linspace(min_e, max_e, nbins+1)
+                lx_ev = np.zeros((2, nbins), dtype=float)
+                lx_ec = np.zeros((2, nbins), dtype=float)
+                lz_ev = np.zeros((2, nbins), dtype=float)
+                lz_ec = np.zeros((2, nbins), dtype=float)
+                lx_ev[0] = np.linspace(min_e, max_e, nbins)
+                lx_ec[0] = np.linspace(min_e, max_e, nbins)
+                lz_ev[0] = np.linspace(min_e, max_e, nbins)
+                lz_ec[0] = np.linspace(min_e, max_e, nbins)
+
+                area_density = 20
+                nbins_x2 = int(-min_e*area_density)
+                nbins_y2 = int(max_e*area_density)
+            
+            # Keep the k loop here in case I could parallellize over the k-points in the future
+            for ik in range(nk):
+                kw = self.axml.kw[ik]
+                eig = (eig_kn[ik,:,min_band:max_band].flatten()-np.array([eig_kn[ik,:,min_band:max_band].flatten()]).T)
+                eig = np.divide(1., eig, out=np.zeros_like(eig), where=eig!=0)
+                eig = eig.reshape(2,nbands,2,nbands)
+                
+                occ = np.outer(occ_kn[ik,:,min_band:max_band].flatten(),(1-occ_kn[ik,:,min_band:max_band].flatten()))
+                occ = np.clip(occ, 0, 2)
+                occ = occ.reshape(2,nbands,2,nbands)
+                
+                lx_sbsb = np.einsum('jkl,mnl->jkmn', left_lx[ik], proj[ik])
+                lx_sbsb = occ * eig * lx_sbsb * lx_sbsb.conj()
+                lx_sbsb[0,:,1,:] *= -1.
+                lx_sbsb[1,:,0,:] *= -1.
+
+                lz_sbsb = np.einsum('jkl,mnl->jkmn', left_lz[ik], proj[ik])
+                lz_sbsb = occ * eig * lz_sbsb * lz_sbsb.conj()
+                lz_sbsb[0,:,1,:] *= -1.
+                lz_sbsb[1,:,0,:] *= -1.
+                
+                lx = np.sum(lx_sbsb, axis = (1,3))
+                lz = np.sum(lz_sbsb, axis = (1,3))
+                
+                # k resolved MAE
+                lx_k[ik] = kw * np.sum(lx) * ksi**2 * 1000
+                lz_k[ik] = kw * np.sum(lz) * ksi**2 * 1000
+                
+                if collect:
+                    # band resolved MAE
+                    lx_b += kw * lx_sbsb * ksi**2 * 1000
+                    lz_b += kw * lz_sbsb * ksi**2 * 1000
+
+                    # Energy resolved MAE (with binning)
+                    bb_lx_c = np.sum(lx_sbsb, axis=(0,1)).real
+                    bb_lx_v = np.sum(lx_sbsb, axis=(2,3)).real
+                    bb_lz_c = np.sum(lz_sbsb, axis=(0,1)).real
+                    bb_lz_v = np.sum(lz_sbsb, axis=(2,3)).real
+
+
+                    eig_flat = eig_kn[ik,:,min_band:max_band].flatten()
+                    y, _ = np.histogram(eig_flat, bins=x, weights = bb_lx_c.flatten())
+                    lx_ec[1] += y
+
+                    y, _ = np.histogram(eig_flat, bins=x, weights = bb_lx_v.flatten())
+                    lx_ev[1] += y
+
+                    y, _ = np.histogram(eig_flat, bins=x, weights = bb_lz_c.flatten())
+                    lz_ec[1] += y
+
+                    y, _ = np.histogram(eig_flat, bins=x, weights = bb_lz_v.flatten())
+                    lz_ev[1] += y
+                
+            
+            total = (np.sum(lz_k) - np.sum(lx_k)).real
+            if collect:
+                l_ev = lz_ev.copy()
+                l_ev[1] -= lx_ev[1]
+                l_ec = lz_ec.copy()
+                l_ec[1] -= lx_ec[1]
+
+                results[orbital] = {'total':total,
+                                    'lz_k': lz_k,
+                                    'lx_k':lx_k,
+                                    'lx_b':lx_b,
+                                    'lz_b':lz_b,
+                                    'lx_ev':lx_ev,
+                                    'lx_ec':lx_ec,
+                                    'lz_ev':lz_ev,
+                                    'lz_ec':lz_ec,
+                                    'l_ev':l_ev,
+                                    'l_ec':l_ec
+                                    }
+             else:
+                results[orbital] = {'total':total}
+            end_time = time.time()
+            print(" Time to complete MAE calculation: {0:.3f} seconds".format(end_time-start_time))
+        return results
 
     @staticmethod
-    def plot_dos_1D(mat : typing.Dict, emin = None, emax = None, prefix = 'mat', line_density = 100, sigma = 0.05, show=False):
+    def plot_dos_1D(mat : typing.Dict,
+                    emin : float = None,
+                    emax : float = None,
+                    prefix : str = 'mat',
+                    sigma : float = 0.05,
+                    show : bool = False):
         """Plots 1D MAE density
         Since MAE is a pair density, to plot electronic DOS like figure,
         conduction and valence band regions are calculated as "marginal" densities
@@ -651,55 +653,43 @@ class MAE(AngularMoment):
         Args:
             mat (typing.Dict): mat dictionary returned from get_mat function
             emin (int, optional): Minimum valence band energy. 
-                                  Units in eV, with respect to Fermi energy. Defaults to -6.
+                Units in eV, with respect to Fermi energy. Defaults to -6.
             emax (int, optional): Maximum conduction band energy. Defaults to 4.
             prefix (str, optional): Saved figure prefix. Defaults to 'mat'.
             line_density (int, optional): Line density per eV. Defaults to 100.
+            sigma (float, optional): Width of the 1D gaussians. Defaults to 0.05 eV. 
             show (bool, optional): If True, plot only do not save figure. Defaults to False.
         """
+        start_time = time.time()
+        xv, lx_ev = mat['lx_ev']
+        xc, lx_ec = mat['lx_ec']
+        _, lz_ev = mat['lz_ev']
+        _, lz_ec = mat['lz_ec']
+        _, l_ev = mat['l_ev']
+        _, l_ec = mat['l_ec']
         
-        lx_e = mat['lx_e']
-        lz_e = mat['lz_e']
-        
-        lx_v = lx_e[:,[2,4]]
-        lx_c = lx_e[:,[3,4]]
+        val_min = np.min(xv) - 3 * sigma
+        val_max = np.max(xv) + 3 * sigma
 
-        lz_v = lz_e[:,[2,4]]
-        lz_c = lz_e[:,[3,4]]
-
-        l_v = lx_v.copy()
-        l_v[:,1] = lz_v[:,1] - lx_v[:,1]
-        l_c = lx_c.copy()
-        l_c[:,1] = lz_c[:,1] - lx_c[:,1]
-
-        val_min = np.min(l_v[:,0]) - 3 * sigma
-        val_max = np.max(l_v[:,0]) + 3 * sigma
-
-        cond_min = np.min(l_c[:,0]) - 3 * sigma
-        cond_max = np.max(l_c[:,0]) + 3 * sigma
+        cond_min = np.min(xc) - 3 * sigma
+        cond_max = np.max(xc) + 3 * sigma
 
         if emin != None:
             val_min = emin
         if emax != None:
             cond_max = emax
 
-        intervals = [[val_min, val_max], # valence
-                     [cond_min, cond_max]] # conduction band
-
         plt.figure()
-        for ind, interval in enumerate(intervals):
-            i_min, i_max = interval
+        for ind in range(2):
             if ind == 0:
-                val = l_v
+                x, val = xv, l_ev # marginal valence bands
             else:
-                val = l_c
-
-            x = np.linspace(i_min, i_max, int((i_max-i_min)*line_density+1))
+                x, val = xc, l_ec # marginal conduction bands
             
             # Initialize zero array
             y = 0 * normal(0, x)
-            for ei in val:
-                y += ei[1] * normal(ei[0], x, sig=sigma)
+            for i, ei in enumerate(val):
+                y += ei * normal(x[i], x, sig=sigma)
 
             plt.plot(x, y)
         
@@ -714,24 +704,32 @@ class MAE(AngularMoment):
             plt.show()
         else:
             plt.savefig('./'+prefix+'-mae-dos-1D.png', dpi=300, pad_inches=0) 
-
+        end_time = time.time()
+        print(" Plotted in {0:.3f} seconds".format(end_time-start_time))
 
     @staticmethod
-    def plot_dos_2D(mat : typing.Dict, emin = -6, emax = 4, prefix = 'mat', line_density = 20, sigma = 0.1, show=False):
+    def plot_dos_2D(mat : typing.Dict, 
+                    emin : float = -6,
+                    emax : float = 4,
+                    prefix : str = 'mat',
+                    line_density : int = 20,
+                    sigma : float = 0.1,
+                    show : bool = False):
         """Plots 2D MAE full pair density
 
         Args:
             mat (typing.Dict): mat dictionary returned from get_mat function
-            emin (int, optional): Minimum valence band energy. 
-                                  Units in eV, with respect to Fermi energy. Defaults to -6.
-            emax (int, optional): Maximum conduction band energy. Defaults to 4.
+            emin (float, optional): Minimum valence band energy. 
+                Units in eV, with respect to Fermi energy. Defaults to -6.
+            emax (float, optional): Maximum conduction band energy. Defaults to 4.
             prefix (str, optional): Saved figure prefix. Defaults to 'mat'.
             line_density (int, optional): Line density per eV. Defaults to 20.
+            sigma (float, optional): Width of the 2D gaussians. Defaults to 0.1 eV. 
             show (bool, optional): If True, plot only do not save figure. Defaults to False.
         """
         assert(emin < 0)
         assert(emax > 0)
-        
+        start_time = time.time()
         lx_e = mat['lx_e']
         lz_e = mat['lz_e']
         
@@ -768,16 +766,29 @@ class MAE(AngularMoment):
             plt.show()
         else:
             plt.savefig('./'+prefix+'-mae-dos-2D.png', dpi=300, pad_inches=0) 
+        end_time = time.time()
+        print(" Plotted in {0:.3f} seconds".format(end_time-start_time))
 
 class QE_PDOS(QE_XML):
     def __init__(self,
                  filename_data,
                  location = './',
                  wfc_dict = None) -> None:
+        """Helper functions to plot partial densities of electronic states from QE output.
+        Uses files with "*pdos_atm*" regex. These files are generated from projwfc.x output.
+
+        Args:
+            filename_data (_type_): data-file-schema.xml filename/location.
+            location (str, optional): Location of the pdos_atm files. Defaults to './'.
+            wfc_dict (_type_, optional): Atomic wavefunctions (basis) in the pseudopotentials.
+            Explained in detail above MAE class. Defaults to None.
+        """
         super().__init__(filename_data=filename_data, filename_proj=None, data_only=True, wfc_dict=wfc_dict)
         self._collect_atom_wfc(location)
     
     def _collect_atom_wfc(self, location):
+        """Collects the names of pdos_atm files.
+        """
         self.pdos = []
         files = glob.glob(location+'/*pdos_atm*')
         files = sorted(files)
@@ -787,7 +798,16 @@ class QE_PDOS(QE_XML):
             self.pdos.append([a[1]+'_'+a[3], a[1]+num+'_'+a[3], f])
     
     @staticmethod
-    def _read(filename, efermi):
+    def _read(filename, efermi) -> np.ndarray:
+        """Parses pdos_atm files
+
+        Args:
+            filename (_type_): pdos_atm filename
+            efermi (_type_): Fermi level, in eV.
+
+        Returns:
+            np.ndarray: returns the columns in pdos_atm file.
+        """
         print(filename)
         pp = np.genfromtxt(filename) 
         num_orb = int((pp.shape[1] - 3) / 2)
@@ -805,7 +825,23 @@ class QE_PDOS(QE_XML):
         # last index is ldos
         return pp_new
         
-    def plot_total(self, orbitals, emin = -6, emax = 4, prefix = 'mat', show = False):
+    def plot_total(self,
+                   orbitals : typing.List,
+                   emin : float = -6,
+                   emax : float = 4,
+                   prefix : str = 'mat',
+                   show : bool = False):
+        """Plot electronic PDOS of multiple orbitals as total
+
+        Args:
+            orbitals (typing.List): List of orbitals to be plotted as sum
+                Example: ['Fe1_d', 'Fe2_d'] prints the sum density of Fe_d orbitals
+                of atoms 1 and 2. 
+            emin (float, optional): Minimum energy level plotted. Defaults to -6 eV.
+            emax (float, optional): Maximum energy level plotted. Defaults to 4 eV.
+            prefix (str, optional): Prefix for the saved figure filename. Defaults to 'mat'.
+            show (bool, optional): If true, saves figure to file. Defaults to False.
+        """
         total = dict()
         x = None
         for pdos in self.pdos:
@@ -849,7 +885,13 @@ class QE_PDOS(QE_XML):
         else:
             plt.savefig(prefix+'-dos-simple.png', dpi=300, bbox_inches="tight", pad_inches=0)
 
-    def _plotd(self, pp):
+    def _plotd(self, pp : np.ndarray):
+        """Plots d-orbitals 
+
+        Args:
+            pp (_type_): Input arrays of d-orbitals.
+                pp arrays are returned from self._read function.
+        """
         lw = 1
         plt.plot(pp[0, 0], pp[1, 0, :], 'k', label=r'$d_{z^2}$', linewidth=lw)
         plt.plot(pp[0, 0], pp[1, 1, :], 'k', linewidth=lw)
@@ -862,7 +904,13 @@ class QE_PDOS(QE_XML):
         plt.plot(pp[0, 0], pp[5, 0, :], 'b', label=r'$d_{xy}$', linewidth=lw)
         plt.plot(pp[0, 0], pp[5, 1, :], 'b', linewidth=lw)
 
-    def _plotp(self, pp):
+    def _plotp(self, pp : np.ndarray):
+        """Plots p-orbitals 
+
+        Args:
+            pp (_type_): Input arrays of d-orbitals.
+                pp arrays are returned from self._read function.
+        """
         lw = 1
         plt.plot(pp[0, 0], pp[1, 0, :], 'r', label=r'$p_z$', linewidth=lw)
         plt.plot(pp[0, 0], pp[1, 1, :], 'r', linewidth=lw)
@@ -871,7 +919,24 @@ class QE_PDOS(QE_XML):
         plt.plot(pp[0, 0], pp[3, 0, :], 'b', label=r'$p_y$', linewidth=lw)
         plt.plot(pp[0, 0], pp[3, 1, :], 'b', linewidth=lw)
 
-    def plot_decomp(self, orbitals, emin = -6, emax = 4, prefix = 'mat', show = False):
+    def plot_decomp(self,
+                    orbitals : typing.List,
+                    emin : float = -6,
+                    emax : float = 4,
+                    prefix : str = 'mat',
+                    show : bool = False):
+        """Plot electronic PDOS of p/d orbitals decomposed into cartesian basis 
+            px, py, pz for p orbitals and dz2, dxy, dyz, dxz, dx2y2 for d orbitals.
+
+        Args:
+            orbitals (typing.List): List of orbitals plotted.
+                Example: with ['Fe1_d']
+                Currently only uses a single orbital (hence the assertion below)
+            emin (float, optional): Minimum energy level plotted. Defaults to -6 eV.
+            emax (float, optional): Maximum energy level plotted. Defaults to 4 eV.
+            prefix (str, optional): Prefix for the saved figure filename. Defaults to 'mat'.
+            show (bool, optional): If true, saves figure to file. Defaults to False.
+        """
         assert(len(orbitals) == 1)
         total = dict()
         x = None
