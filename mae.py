@@ -196,13 +196,12 @@ class QE_XML(object):
                 Example:
                 FeCl2 has three atoms in the simulation cell
                 Fe has s,s,p,d states, Cl has s and p states. Therefore:
-                atmwfc = {'Fe':['s', 's', 'p', 'd'],'Cl1':['s', 'p'], 'Cl2':['s', 'p']}
+                atmwfc = {'Fe':['s', 's', 'p', 'd'],'Cl':['s', 'p']}
             data_only(bool): If True, reads only datafile, not atomic-proj.xml file.
         """
         self._read_datafile(filename_data, wfc_dict)
         if not data_only:
             self._read_proj_xml(filename_proj, orbital=orbital)
-        # TODO: must be checked for metallic states
     
     def _read_datafile(self, filename : str, wfc_dict : typing.Dict):
         """Reads data-file-schema.xml into QE_XML object
@@ -427,7 +426,7 @@ class MAE(AngularMoment):
             wfc_dict (typing.Dict): Atomic wavefunction dictionary.
                 Example: 
                 wfc_dict = {'Fe':['s','s','p','d'], 'Si':['s','p'], 'O':['s','p']}
-                The ordering in the pseudopotential must be preserved in the lists. 
+                The ordering of the atomic wavefunctions in the lists must agree with the ordering in the pseudopotential.
             filename_data (str, optional): Name/location of data-file-schema.xml. Defaults to './data-file-schema.xml'.
             filename_proj (str, optional): Name/location of atomic-proj.xml. Defaults to './atomic-proj.xml'.
             orbital (str, optional): If not None, then only this orbital is read from the proj.xml file. 
@@ -480,20 +479,15 @@ class MAE(AngularMoment):
 
         Args:
             proj_dict (typing.Dict): {"orbital": atomic_wavefunction} dict. 
-            Use "get_proj" function to produce this input.
+                Use "get_proj" function to produce this input.
             ksi (float, optional): Spin orbit coupling constant. Defaults to 1.0. Units cm^-1. 
             min_band (int, optional): For very large calculations, one may need the bands only 
-            closer to Fermi level. Lower index of the bands used in the MAE integration. Defaults 
-            to 0. 
+                closer to Fermi level. Lower index of the bands used in the MAE integration. Defaults 
+                to 0. 
             max_band (int, optional): Similar to min_band, upper index of the bands. Defaults to -1, 
-            meaning all the bands. 
-            deltaE (int, optional): A scaling factor to calculate numerically significant MAE 
-            contributions. For an insulating system, this can be considered as the energy scale in 
-            eV. For example, a deltaE value of 10 in an insulating system, interband couplings with 
-            more than 10 eV difference between the bands are not calculated. For metallic systems, 
-            would also include the multiplications of the occupancies. For larger 
-            deltaE, results are expected to converge.  Defaults to -1. 
-
+                meaning all the bands. 
+            collect (bool, optional): If False, only returns the MAE, energy. Otherwise, returns 
+                band, energy and k-point decomposed MAE for further analysis.
         Returns:
             typing.Dict: a dictionary of energy and band resolved Lx and Lz data for each orbitals
         """
@@ -656,7 +650,6 @@ class MAE(AngularMoment):
                 Units in eV, with respect to Fermi energy. Defaults to -6.
             emax (int, optional): Maximum conduction band energy. Defaults to 4.
             prefix (str, optional): Saved figure prefix. Defaults to 'mat'.
-            line_density (int, optional): Line density per eV. Defaults to 100.
             sigma (float, optional): Width of the 1D gaussians. Defaults to 0.05 eV. 
             show (bool, optional): If True, plot only do not save figure. Defaults to False.
         """
