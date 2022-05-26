@@ -21,7 +21,7 @@ from mae import MAE
 mae = MAE(filename_data = './data-file-schema.xml',
           filename_proj = './atomic_proj.xml',
           wfc_dict = {'Cr':['s','s','p','d'], 
-                     'Cl':['s','p']})
+                     'I':['s','p']})
 proj = mae.get_proj(['Cr1_d'])
 res = mae.get_mat(proj)
 mae.plot_dos_1D(res['Cr1_d'])
