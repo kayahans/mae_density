@@ -633,13 +633,14 @@ class MAE(AngularMoment):
             print(" Time to complete MAE calculation: {0:.3f} seconds".format(end_time-start_time))
         return results
 
-    @staticmethod
+        @staticmethod
     def plot_dos_1D(mat : typing.Dict,
                     emin : float = None,
                     emax : float = None,
                     prefix : str = 'mat',
                     sigma : float = 0.05,
-                    show : bool = False):
+                    show : bool = False, 
+                    cumulative : bool = False):
         """Plots 1D MAE density
         Since MAE is a pair density, to plot electronic DOS like figure,
         conduction and valence band regions are calculated as "marginal" densities
@@ -650,8 +651,10 @@ class MAE(AngularMoment):
                 Units in eV, with respect to Fermi energy. Defaults to -6.
             emax (int, optional): Maximum conduction band energy. Defaults to 4.
             prefix (str, optional): Saved figure prefix. Defaults to 'mat'.
+            line_density (int, optional): Line density per eV. Defaults to 100.
             sigma (float, optional): Width of the 1D gaussians. Defaults to 0.05 eV. 
             show (bool, optional): If True, plot only do not save figure. Defaults to False.
+            cumulative (bool, optional): If True, plot marginal cumulative MAE. Defaults to False.
         """
         start_time = time.time()
         xv, lx_ev = mat['lx_ev']
@@ -683,13 +686,21 @@ class MAE(AngularMoment):
             y = 0 * normal(0, x)
             for i, ei in enumerate(val):
                 y += ei * normal(x[i], x, sig=sigma)
-
+            if cumulative:
+                if ind == 0:
+                    y = np.cumsum(y)
+                else:
+                    # Reverse cumulative sum
+                    y = np.cumsum(y[::-1])[::-1]
             plt.plot(x, y)
         
         plt.axhline(y=0, linestyle='dashed', color='k')
         plt.axvline(x=0, linestyle='dashed', color='k')
         plt.xlabel('Energy (eV)')
-        plt.ylabel('MAE (meV)')
+        if cumulative:
+            plt.ylabel('CMAE (meV)')
+        else:
+            plt.ylabel('MAE (meV)')
         plt.xlim((val_min, cond_max))
         plt.grid(linestyle='-')
         plt.grid(which='minor', linestyle='--', axis='x', zorder=-100)
