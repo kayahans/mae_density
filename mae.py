@@ -633,7 +633,7 @@ class MAE(AngularMoment):
             print(" Time to complete MAE calculation: {0:.3f} seconds".format(end_time-start_time))
         return results
 
-        @staticmethod
+    @staticmethod
     def plot_dos_1D(mat : typing.Dict,
                     emin : float = None,
                     emax : float = None,
@@ -711,6 +711,7 @@ class MAE(AngularMoment):
         end_time = time.time()
         print(" Plotted in {0:.3f} seconds".format(end_time-start_time))
 
+    # 2D plot is under development, needs 2D binning in the get_mat function when collect = True
     @staticmethod
     def plot_dos_2D(mat : typing.Dict, 
                     emin : float = -6,
