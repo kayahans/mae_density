@@ -25,6 +25,8 @@ mae = MAE(filename_data = './data-file-schema.xml',
 proj = mae.get_proj(['Cr1_d'])
 res = mae.get_mat(proj)
 mae.plot_dos_1D(res['Cr1_d'])
+# 2D plotting is getting updated for a more efficient version with binning. 
+# Let me know if you need to use it in your work, I can prioritize it. 
 mae.plot_dos_2D(res['Cr1_d'])
 ```
 This block of code above will create two plots for the MAE density
